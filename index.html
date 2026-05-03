@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portfolio BART</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+<div id="mySidebar" class="sidebar">
+    <div class="nav-item active" onclick="switchTab('test-portfolio-page', this); closeNav()">PORTFOLIO</div>
+    <div class="nav-item" onclick="switchTab('data-page', this); closeNav()">DATA</div>
+    <div class="nav-item" onclick="switchTab('aandelen-page', this); closeNav()">LIVE</div>
+    <div class="nav-item" onclick="switchTab('heatmap-page', this); closeNav()">HEATMAP</div>
+</div>
+<div id="overlay" class="overlay" onclick="closeNav()"></div>
+<div class="nav">
+    <div style="display:flex; align-items:center;">
+        <button class="menu-btn" onclick="openNav()">☰</button>
+        <span style="font-weight:bold; margin-left:10px;">PORTFOLIO</span>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center;">
+        <button class="btn btn-theme" onclick="toggleBlur()" title="Verberg Bedragen">👁️</button>
+        <button class="btn btn-theme" onclick="toggleTheme()" id="themeBtn">🌙</button>
+    </div>
+</div>
+
+<div class="container">
+
+<!-- ============================================ -->
+<!-- PORTFOLIO PAGINA (was TEST)                 -->
+<!-- ============================================ -->
+<div id="test-portfolio-page" class="tab-content active">
+    <div class="header" style="margin-bottom:12px;">
+        <div class="header-titles"><h1>PORTFOLIO</h1></div>
+        <div style="display:flex;align-items:center;gap:10px;">
+            <button class="btn" onclick="initTestPortfolio(true)" style="font-size:0.75rem;padding:4px 10px;" id="tp-vernieuwen-btn">↻ Vernieuwen</button>
+            <span id="testPfStatus" style="font-size:0.75rem;color:var(--text-muted);white-space:nowrap;"></span>
+        </div>
+    </div>
+
+    <!-- View tabs: PORTFOLIO / OVERZICHT -->
+    <div class="tp-view-tabs" style="display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap;">
+        <button class="tp-view-tab active" id="tp-vtab-overzicht"  onclick="switchTpView('overzicht',this)">PORTFOLIO</button>
+        <button class="tp-view-tab" id="tp-vtab-periodeoverzicht"  onclick="switchTpView('periodeoverzicht',this)">OVERZICHT</button>
+    </div>
+
+    <!-- OVERZICHT VIEW -->
+    <div id="tp-view-overzicht">
+
+    <!-- Portfolio vooruitgang grafiek -->
+    <div class="card" style="margin-bottom:1.5rem;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;flex-wrap:wrap;">
+            <h3 id="tp-chart-title" style="margin:0;">PORTFOLIO VOORUITGANG</h3>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <span id="tp-periodReturn" style="font-size:0.85rem;font-weight:800;letter-spacing:-0.01em;"></span>
+                <div class="time-filter-btns" data-chart="tp" style="display:flex;gap:4px;">
+                    <button class="btn time-btn" onclick="setTpTimeFilter('1w',this)">1W</button>
+                    <button class="btn time-btn" onclick="setTpTimeFilter('1m',this)">1M</button>
+                    <button class="btn time-btn active-time" onclick="setTpTimeFilter('ytd',this)">YTD</button>
+                    <button class="btn time-btn" onclick="setTpTimeFilter('1y',this)">1J</button>
+                    <button class="btn time-btn" onclick="setTpTimeFilter('2y',this)">2J</button>
+                    <button class="btn time-btn" onclick="setTpTimeFilter('all',this)">ALLES</button>
+                </div>
+                <button class="btn" onclick="runPortfolioBackfill(true)" style="font-size:0.75rem;padding:6px 10px;">↻</button>
+            </div>
+        </div>
+        <!-- Benchmark toggles -->
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;margin-top:4px;">
+            <label class="bench-toggle" style="--c:#e67e22;">
+                <input type="checkbox" id="tp-benchSP" onchange="updateTpBenchmarks()">
+                <span class="bench-dot"></span> S&amp;P 500
+            </label>
+            <label class="bench-toggle" style="--c:#8e44ad;">
+                <input type="checkbox" id="tp-benchMSCI" onchange="updateTpBenchmarks()">
+                <span class="bench-dot"></span> MSCI World
+            </label>
+            <label class="bench-toggle" style="--c:#16a085;">
+                <input type="checkbox" id="tp-benchNASDAQ" onchange="updateTpBenchmarks()">
+                <span class="bench-dot"></span> Nasdaq 100
+            </label>
+            <label class="bench-toggle" style="--c:#c0392b;">
+                <input type="checkbox" id="tp-benchBTC" onchange="updateTpBenchmarks()">
+                <span class="bench-dot"></span> Bitcoin
+            </label>
+            <label class="bench-toggle" style="--c:#2980b9;">
+                <input type="checkbox" id="tp-benchBEL20" onchange="updateTpBenchmarks()">
+                <span class="bench-dot"></span> BEL 20
+            </label>
+        </div>
+        <div id="tp-historyLoading" style="display:none;text-align:center;padding:40px 0;color:var(--text-muted);font-size:0.85rem;">
+            ⏳ Historische prijzen ophalen…
+        </div>
+        <div style="position:relative;height:240px;">
+            <canvas id="tp-historyChart"></canvas>
+        </div>
+        <div id="tp-historyEmpty" style="display:none;text-align:center;padding:40px 0;color:var(--text-muted);font-size:0.85rem;">
+            Geen data beschikbaar. Klik op ↻ om historische prijzen op te halen.
+        </div>
+    </div>
+
+    <!-- Broker filter tabs -->
+    <div class="ap-broker-tabs">
+        <button class="ap-broker-tab active" data-broker="all"    onclick="setTpBroker('all', this)">
+            <span class="ap-tab-dot" style="background:var(--total-gray);"></span> TOTAAL
+        </button>
+        <button class="ap-broker-tab" data-broker="Bolero" onclick="setTpBroker('Bolero', this)">
+            <span class="ap-tab-dot" style="background:var(--bolero);"></span> BOLERO
+        </button>
+        <button class="ap-broker-tab" data-broker="Degiro" onclick="setTpBroker('Degiro', this)">
+            <span class="ap-tab-dot" style="background:var(--degiro);"></span> DEGIRO
+        </button>
+        <button class="ap-broker-tab" data-broker="Saxo"   onclick="setTpBroker('Saxo', this)">
+            <span class="ap-tab-dot" style="background:var(--saxo);"></span> SAXO
+        </button>
+    </div>
+
+    <!-- Hero card -->
+    <div class="card" style="margin-bottom:1.5rem;padding:0;overflow:hidden;border-top:3px solid var(--ap-accent);">
+        <div class="tp-hero-top">
+            <!-- Totale waarde -->
+            <div class="tp-hero-col tp-hero-col-main">
+                <div class="tp-hero-label">TOTALE WAARDE</div>
+                <div id="tp-totalValue" class="blur-target tp-hero-val-lg">€ –</div>
+                <div id="tp-totalCost" class="blur-target tp-hero-sub">Gestort: € –</div>
+            </div>
+            <!-- Rechter paneel: P/L + DAG P/L naast elkaar -->
+            <div class="tp-hero-right-panel">
+                <div class="tp-hero-col">
+                    <div class="tp-hero-label">P/L TOTAAL</div>
+                    <div id="tp-totalPL" class="blur-target tp-hero-val-md">€ –</div>
+                    <div id="tp-totalPLPct" class="tp-hero-pct">–</div>
+                </div>
+                <div class="tp-hero-col">
+                    <div class="tp-hero-label">DAG P/L</div>
+                    <div id="tp-dayPL" class="blur-target tp-hero-val-md">€ –</div>
+                    <div id="tp-dayPLPct" class="tp-hero-pct">–</div>
+                </div>
+            </div>
+        </div>
+        <div class="tp-hero-bottom">
+            <!-- Posities -->
+            <div class="tp-hero-posities">
+                <div>
+                    <div class="tp-hero-label" style="margin-bottom:2px;">POSITIES</div>
+                    <div id="tp-positions" style="font-size:1.05rem;font-weight:800;line-height:1;">–</div>
+                </div>
+                <div id="tp-positionsBreakdown" style="font-size:0.7rem;color:var(--text-muted);line-height:1.4;">–</div>
+            </div>
+            <!-- Cash -->
+            <div class="tp-hero-cash">
+                <div style="flex-shrink:0;">
+                    <div class="tp-hero-label" style="margin-bottom:2px;">CASH</div>
+                    <div id="tp-cash" class="blur-target" style="font-size:1.05rem;font-weight:800;color:var(--ap-accent);line-height:1;">€ –</div>
+                    <div id="tp-cashBreakdown" style="font-size:0.7rem;color:var(--text-muted);margin-top:3px;line-height:1.4;"></div>
+                </div>
+                <div id="tp-cashEditor" class="ap-cash-editor" style="flex:0 0 auto;margin:0;"></div>
+            </div>
+            <!-- Startdatum -->
+            <div class="tp-hero-stat" id="tp-hero-start" style="display:none;">
+                <div class="tp-hero-label" style="margin-bottom:2px;">START</div>
+                <div id="tp-startDate" style="font-size:1.05rem;font-weight:800;line-height:1;">–</div>
+                <div id="tp-startDays" style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">–</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Top 5 vandaag -->
+    <div class="ap-stats-row ap-stats-row-2" style="margin-bottom:1rem;">
+        <div class="card ap-card ap-card-toplist">
+            <div class="ap-card-label tp-collapsible-hdr" onclick="tpToggleList('tp-dayBestList',this)">
+                TOP 5 WINNERS VANDAAG <span class="tp-collapse-icon">▾</span>
+            </div>
+            <div id="tp-dayBestList" class="ap-toplist">–</div>
+        </div>
+        <div class="card ap-card ap-card-toplist">
+            <div class="ap-card-label tp-collapsible-hdr" onclick="tpToggleList('tp-dayWorstList',this)">
+                TOP 5 VERLIEZERS VANDAAG <span class="tp-collapse-icon">▾</span>
+            </div>
+            <div id="tp-dayWorstList" class="ap-toplist">–</div>
+        </div>
+    </div>
+
+    <!-- Top 5 lijsten -->
+    <div class="ap-stats-row ap-stats-row-2">
+        <div class="card ap-card ap-card-toplist">
+            <div class="ap-card-label tp-collapsible-hdr" onclick="tpToggleList('tp-bestList',this)">
+                TOP 5 BESTE <span class="tp-collapse-icon">▾</span>
+            </div>
+            <div id="tp-bestList" class="ap-toplist">–</div>
+        </div>
+        <div class="card ap-card ap-card-toplist">
+            <div class="ap-card-label tp-collapsible-hdr" onclick="tpToggleList('tp-worstList',this)">
+                TOP 5 SLECHTSTE <span class="tp-collapse-icon">▾</span>
+            </div>
+            <div id="tp-worstList" class="ap-toplist">–</div>
+        </div>
+    </div>
+
+    <!-- Verdeling: broker + sector -->
+    <div class="card" style="margin-bottom:1.5rem;">
+        <h3 style="margin:0 0 14px 0;">VERDELING</h3>
+        <div class="tp-verdeling-grid">
+            <!-- Broker pie (verborgen bij broker-specifieke tabs) -->
+            <div id="tp-brokerPieWrap">
+                <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.06em;color:var(--text-muted);margin-bottom:10px;">BROKER</div>
+                <div style="display:flex;flex-direction:column;align-items:center;gap:10px;">
+                    <div style="width:130px;height:130px;flex-shrink:0;position:relative;">
+                        <canvas id="tp-brokerPie"></canvas>
+                    </div>
+                    <div id="tp-brokerPieLegend" class="tp-pie-legend-compact"></div>
+                </div>
+            </div>
+            <!-- Sector pie -->
+            <div>
+                <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.06em;color:var(--text-muted);margin-bottom:10px;">SECTOR</div>
+                <div style="display:flex;flex-direction:column;align-items:center;gap:10px;">
+                    <div style="width:130px;height:130px;flex-shrink:0;position:relative;">
+                        <canvas id="tp-sectorPie"></canvas>
+                    </div>
+                    <div id="tp-sectorLegend" class="tp-pie-legend-compact"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Posities -->
+    <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+            <h3 id="tp-positionsTitle" style="margin:0;">POSITIES PER SECTOR</h3>
+            <div class="ap-view-toggle">
+                <button class="ap-view-btn"        data-view="sector" onclick="setTpPositionsView('sector', this)">Per sector</button>
+                <button class="ap-view-btn active" data-view="all"    onclick="setTpPositionsView('all', this)">Alle posities</button>
+            </div>
+        </div>
+        <div id="tp-bySector" style="display:none;"></div>
+        <div id="tp-allPositions"></div>
+    </div>
+
+    </div><!-- /tp-view-overzicht -->
+
+    <!-- OVERZICHT VIEW (kalender + maand + week gecombineerd) -->
+    <div id="tp-view-periodeoverzicht" style="display:none;">
+        <div style="display:flex;flex-direction:column;gap:1rem;">
+
+            <!-- Rendement Kalender -->
+            <div class="card" style="padding:18px 16px;">
+                <div style="display:flex;gap:8px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
+                    <button class="btn" id="tpHeatmapBrokerBtn" onclick="cycleTpHeatmapBroker()" style="font-size:0.75rem;padding:6px 14px;">TOTAAL ▾</button>
+                    <button class="btn" onclick="tpHeatmapYear--; renderTpHeatmap();" style="font-size:0.75rem;padding:6px 10px;">◀</button>
+                    <span id="tpHeatmapYearLabel" style="font-weight:700;font-size:0.9rem;min-width:40px;text-align:center;"></span>
+                    <button class="btn" onclick="tpHeatmapYear++; renderTpHeatmap();" style="font-size:0.75rem;padding:6px 10px;">▶</button>
+                    <div style="display:flex;gap:6px;align-items:center;margin-left:auto;font-size:0.7rem;color:var(--text-muted);">
+                        <span style="width:14px;height:14px;border-radius:3px;background:#2ecc71;display:inline-block;opacity:0.85;"></span>Winst
+                        <span style="width:14px;height:14px;border-radius:3px;background:#e74c3c;display:inline-block;margin-left:6px;opacity:0.85;"></span>Verlies
+                        <span style="width:14px;height:14px;border-radius:3px;background:var(--border-color);display:inline-block;margin-left:6px;"></span>Geen data
+                    </div>
+                </div>
+                <div id="tpHeatmapGrid" style="overflow-x:auto;"></div>
+            </div>
+
+            <!-- Maandoverzicht -->
+            <div class="card">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+                    <h3 style="margin:0;">MAAND</h3>
+                    <div style="display:flex;gap:6px;align-items:center;">
+                        <button class="btn" id="tpMaandBrokerBtn" onclick="cycleTpMaandBroker()" style="font-size:0.72rem;padding:5px 10px;">TOTAAL ▾</button>
+                        <button class="btn" onclick="tpMaandYear--; renderTpMaandoverzicht();" style="font-size:0.72rem;padding:5px 8px;">◀</button>
+                        <span id="tpMaandYearLabel" style="font-weight:700;font-size:0.85rem;min-width:36px;text-align:center;"></span>
+                        <button class="btn" onclick="tpMaandYear++; renderTpMaandoverzicht();" style="font-size:0.72rem;padding:5px 8px;">▶</button>
+                    </div>
+                </div>
+                <div style="overflow-x:auto;">
+                    <table id="tpMaandTable" style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+                        <thead id="tpMaandTableHead"></thead>
+                        <tbody id="tpMaandTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Weekoverzicht -->
+            <div class="card">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+                    <h3 style="margin:0;">WEEK</h3>
+                    <div style="display:flex;gap:6px;align-items:center;">
+                        <button class="btn" id="tpWeekBrokerBtn" onclick="cycleTpWeekBroker()" style="font-size:0.72rem;padding:5px 10px;">TOTAAL ▾</button>
+                        <button class="btn" onclick="tpWeekYear--; renderTpWeekoverzicht();" style="font-size:0.72rem;padding:5px 8px;">◀</button>
+                        <span id="tpWeekYearLabel" style="font-weight:700;font-size:0.85rem;min-width:36px;text-align:center;"></span>
+                        <button class="btn" onclick="tpWeekYear++; renderTpWeekoverzicht();" style="font-size:0.72rem;padding:5px 8px;">▶</button>
+                    </div>
+                </div>
+                <div style="overflow-x:auto;">
+                    <table id="tpWeekTable" style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+                        <thead id="tpWeekTableHead"></thead>
+                        <tbody id="tpWeekTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+    </div><!-- /tp-view-periodeoverzicht -->
+
+</div>
+
+
+<!-- ============================================ -->
+<!-- DATA PAGINA (aandelen + crypto + stortingen + cash) -->
+<!-- ============================================ -->
+<div id="data-page" class="tab-content">
+    <div class="header data-header-actions">
+        <h1>DATA</h1>
+        <div class="header-btns">
+            <button class="btn btn-icloud" onclick="exportMasterJSON()">Backup naar iCloud</button>
+            <button class="btn" onclick="document.getElementById('importJSON').click()">Upload Backup</button>
+            <input type="file" id="importJSON" style="display:none" accept=".json" onchange="importMasterJSON(this)">
+            <button class="btn btn-main" onclick="saveData()">UPDATE</button>
+        </div>
+    </div>
+
+    <div class="data-tabs">
+        <button class="data-tab-btn active" onclick="switchDataTab('aandelen-data-tab', this)">AANDELEN</button>
+        <button class="data-tab-btn" onclick="switchDataTab('crypto-data-tab', this)">CRYPTO</button>
+        <button class="data-tab-btn" onclick="switchDataTab('td-cashflows-tab', this)">STORTINGEN &amp; OPNAMES</button>
+        <button class="data-tab-btn" onclick="switchDataTab('td-cash-tab', this)">CASH</button>
+    </div>
+
+        <div id="aandelen-data-tab" class="sub-tab-content active">
+        <!-- Aandelen tabel -->
+        <div class="card" style="margin-top:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+                <h3 style="margin:0;">AANDELEN</h3>
+                <button class="btn btn-main" onclick="showAddStockData('stock')" style="font-size:0.8rem;">+ Toevoegen</button>
+            </div>
+            <div style="overflow-x:auto;">
+                <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+                    <thead><tr>
+                        <th style="text-align:left;padding:8px 6px;color:var(--text-muted);font-size:0.68rem;font-weight:700;border-bottom:2px solid var(--border-color);">Ticker</th>
+                        <th style="text-align:left;padding:8px 6px;color:var(--text-muted);font-size:0.68rem;font-weight:700;border-bottom:2px solid var(--border-color);">Naam</th>
+                        <th style="text-align:center;padding:8px 6px;color:var(--text-muted);font-size:0.68rem;font-weight:700;border-bottom:2px solid var(--border-color);">Broker</th>
+                        <th style="text-align:center;padding:8px 6px;color:var(--text-muted);font-size:0.68rem;font-weight:700;border-bottom:2px solid var(--border-color);">Valuta</th>
+                        <th style="text-align:right;padding:8px 6px;color:var(--text-muted);font-size:0.68rem;font-weight:700;border-bottom:2px solid var(--border-color);">GAK</th>
+                        <th style="text-align:right;padding:8px 6px;color:var(--text-muted);font-size:0.68rem;font-weight:700;border-bottom:2px solid var(--border-color);">Aantal</th>
+                        <th style="padding:8px 6px;border-bottom:2px solid var(--border-color);"></th>
+                    </tr></thead>
+                    <tbody id="aandelenDataBody"></tbody>
+                </table>
+            </div>
+        </div>
+        <!-- ETF tabel -->
+        <div class="card" style="margin-top:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+                <h3 style="margin:0;">ETFs</h3>
+                <button class="btn btn-main" onclick="showAddStockData('etf')" style="font-size:0.8rem;">+ Toevoegen</button>
+            </div>
+            <div style="overflow-x:auto;">
+                <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+                    <thead><tr>
+                        <th style="text-align:left;padding:8px 6px;color:var(--text-muted);font-size:0.68rem;font-weight:700;border-bottom:2px solid var(--border-color);">Ticker</th>
+                        <th style="text-align:left;padding:8px 6px;color:var(--text-muted);font-size:0.68rem;font-weight:700;border-bottom:2px solid var(--border-color);">Naam</th>
+                        <th style="text-align:center;padding:8px 6px;color:var(--text-muted);font-size:0.68rem;font-weight:700;border-bottom:2px solid var(--border-color);">Broker</th>
+                        <th style="text-align:center;padding:8px 6px;color:var(--text-muted);font-size:0.68rem;font-weight:700;border-bottom:2px solid var(--border-color);">Valuta</th>
+                        <th style="text-align:right;padding:8px 6px;color:var(--text-muted);font-size:0.68rem;font-weight:700;border-bottom:2px solid var(--border-color);">GAK</th>
+                        <th style="text-align:right;padding:8px 6px;color:var(--text-muted);font-size:0.68rem;font-weight:700;border-bottom:2px solid var(--border-color);">Aantal</th>
+                        <th style="padding:8px 6px;border-bottom:2px solid var(--border-color);"></th>
+                    </tr></thead>
+                    <tbody id="etfDataBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+
+        <div id="crypto-data-tab" class="sub-tab-content">
+        <div class="card" style="margin-top:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+                <h3 style="margin:0;">CRYPTO POSITIES</h3>
+                <button class="btn btn-main" onclick="showAddStockData('crypto')" style="font-size:0.8rem;">+ Toevoegen</button>
+            </div>
+            <div style="overflow-x:auto;">
+                <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+                    <thead><tr>
+                        <th style="text-align:left;padding:8px 6px;color:var(--text-muted);font-size:0.68rem;font-weight:700;border-bottom:2px solid var(--border-color);">Ticker</th>
+                        <th style="text-align:left;padding:8px 6px;color:var(--text-muted);font-size:0.68rem;font-weight:700;border-bottom:2px solid var(--border-color);">Naam</th>
+                        <th style="text-align:right;padding:8px 6px;color:var(--text-muted);font-size:0.68rem;font-weight:700;border-bottom:2px solid var(--border-color);">Aantal</th>
+                        <th style="padding:8px 6px;border-bottom:2px solid var(--border-color);"></th>
+                    </tr></thead>
+                    <tbody id="cryptoDataBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- STORTINGEN & OPNAMES TAB -->
+    <div id="td-cashflows-tab" class="sub-tab-content">
+        <div class="card" style="margin-bottom:1rem;margin-top:16px;">
+            <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.08em;color:var(--text-muted);margin-bottom:14px;">STORTING / OPNAME TOEVOEGEN</div>
+            <div class="td-form-grid" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr));">
+                <div class="td-form-group">
+                    <label class="td-form-label">Datum</label>
+                    <input type="date" id="cf-date" class="td-form-input" />
+                </div>
+                <div class="td-form-group">
+                    <label class="td-form-label">Type</label>
+                    <select id="cf-type" class="td-form-input">
+                        <option value="storting">Storting</option>
+                        <option value="opname">Opname</option>
+                    </select>
+                </div>
+                <div class="td-form-group">
+                    <label class="td-form-label">Broker</label>
+                    <select id="cf-broker" class="td-form-input">
+                        <option value="Bolero">Bolero</option>
+                        <option value="Degiro">Degiro</option>
+                        <option value="Saxo">Saxo</option>
+                    </select>
+                </div>
+                <div class="td-form-group">
+                    <label class="td-form-label">Bedrag (&euro;)</label>
+                    <input type="number" id="cf-amount" class="td-form-input" placeholder="0.00" step="0.01" min="0" />
+                </div>
+            </div>
+            <div style="margin-top:14px;display:flex;justify-content:flex-end;">
+                <button class="btn btn-main" onclick="addTdCashflow()" style="padding:10px 22px;font-size:0.85rem;">+ Toevoegen</button>
+            </div>
+        </div>
+        <div class="card" style="overflow-x:auto;padding:0;">
+            <div id="td-cf-empty" style="text-align:center;padding:32px;color:var(--text-muted);font-size:0.85rem;">Nog geen stortingen of opnames ingegeven.</div>
+            <table class="td-table" id="td-cf-table" style="display:none;">
+                <thead>
+                    <tr>
+                        <th>Datum</th>
+                        <th>Type</th>
+                        <th>Broker</th>
+                        <th style="text-align:right;">Bedrag (&euro;)</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="td-cf-body"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- CASH TAB -->
+    <div id="td-cash-tab" class="sub-tab-content">
+        <div style="margin-bottom:14px;margin-top:16px;">
+            <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.08em;color:var(--text-muted);">CASH POSITIES PER BROKER</div>
+            <div style="font-size:0.8rem;color:var(--text-muted);margin-top:4px;">Bedragen worden direct opgeslagen en gebruikt in de PORTFOLIO pagina.</div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:1rem;">
+            <!-- Bolero -->
+            <div class="card" style="border-top:3px solid var(--bolero);padding:20px 22px;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
+                    <span style="width:10px;height:10px;border-radius:50%;background:var(--bolero);flex-shrink:0;"></span>
+                    <span style="font-size:0.7rem;font-weight:700;letter-spacing:0.1em;color:var(--text-muted);">BOLERO</span>
+                </div>
+                <div style="display:flex;align-items:baseline;gap:6px;">
+                    <span style="font-size:1.1rem;font-weight:700;color:var(--text-muted);">&euro;</span>
+                    <input type="number" id="td-cash-bolero" step="0.01" min="0" placeholder="0,00"
+                        class="blur-target"
+                        style="font-size:1.6rem;font-weight:800;border:none;background:transparent;color:var(--bolero);width:100%;outline:none;-moz-appearance:textfield;"
+                        oninput="saveTdCashInput('Bolero',this.value)">
+                </div>
+                <div style="height:1px;background:var(--border-color);margin-top:10px;"></div>
+                <div id="td-cash-bolero-info" style="font-size:0.72rem;color:var(--text-muted);margin-top:8px;">–</div>
+            </div>
+            <!-- Degiro -->
+            <div class="card" style="border-top:3px solid var(--degiro);padding:20px 22px;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
+                    <span style="width:10px;height:10px;border-radius:50%;background:var(--degiro);flex-shrink:0;"></span>
+                    <span style="font-size:0.7rem;font-weight:700;letter-spacing:0.1em;color:var(--text-muted);">DEGIRO</span>
+                </div>
+                <div style="display:flex;align-items:baseline;gap:6px;">
+                    <span style="font-size:1.1rem;font-weight:700;color:var(--text-muted);">&euro;</span>
+                    <input type="number" id="td-cash-degiro" step="0.01" min="0" placeholder="0,00"
+                        class="blur-target"
+                        style="font-size:1.6rem;font-weight:800;border:none;background:transparent;color:var(--degiro);width:100%;outline:none;-moz-appearance:textfield;"
+                        oninput="saveTdCashInput('Degiro',this.value)">
+                </div>
+                <div style="height:1px;background:var(--border-color);margin-top:10px;"></div>
+                <div id="td-cash-degiro-info" style="font-size:0.72rem;color:var(--text-muted);margin-top:8px;">–</div>
+            </div>
+            <!-- Saxo -->
+            <div class="card" style="border-top:3px solid var(--saxo);padding:20px 22px;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
+                    <span style="width:10px;height:10px;border-radius:50%;background:var(--saxo);flex-shrink:0;"></span>
+                    <span style="font-size:0.7rem;font-weight:700;letter-spacing:0.1em;color:var(--text-muted);">SAXO</span>
+                </div>
+                <div style="display:flex;align-items:baseline;gap:6px;">
+                    <span style="font-size:1.1rem;font-weight:700;color:var(--text-muted);">&euro;</span>
+                    <input type="number" id="td-cash-saxo" step="0.01" min="0" placeholder="0,00"
+                        class="blur-target"
+                        style="font-size:1.6rem;font-weight:800;border:none;background:transparent;color:var(--saxo);width:100%;outline:none;-moz-appearance:textfield;"
+                        oninput="saveTdCashInput('Saxo',this.value)">
+                </div>
+                <div style="height:1px;background:var(--border-color);margin-top:10px;"></div>
+                <div id="td-cash-saxo-info" style="font-size:0.72rem;color:var(--text-muted);margin-top:8px;">–</div>
+            </div>
+        </div>
+        <!-- Totaal -->
+        <div class="card" style="margin-top:1rem;padding:16px 22px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+            <span style="font-size:0.7rem;font-weight:700;letter-spacing:0.1em;color:var(--text-muted);">TOTAAL CASH</span>
+            <span id="td-cash-totaal" class="blur-target" style="font-size:1.3rem;font-weight:800;">–</span>
+        </div>
+    </div>
+
+        <!-- Add stock/crypto modal for data page -->
+    <div id="addStockDataModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:3000;align-items:center;justify-content:center;">
+        <div class="card" style="width:320px;padding:24px;">
+            <h3 id="addStockDataTitle" style="margin-bottom:16px;">Toevoegen</h3>
+            <input id="addSdTicker" placeholder="Ticker" class="cash-input-field" style="width:100%;border:1px solid var(--border-color);border-radius:8px;padding:10px;font-size:1rem;background:var(--bg-color);color:var(--text-main);margin-bottom:10px;">
+            <input id="addSdName"   placeholder="Naam" class="cash-input-field" style="width:100%;border:1px solid var(--border-color);border-radius:8px;padding:10px;font-size:1rem;background:var(--bg-color);color:var(--text-main);margin-bottom:10px;">
+            <select id="addSdType" style="width:100%;border:1px solid var(--border-color);border-radius:8px;padding:10px;font-size:1rem;background:var(--bg-color);color:var(--text-main);margin-bottom:16px;">
+                <option value="stock">Aandeel</option>
+                <option value="etf">ETF</option>
+                <option value="option">Optie</option>
+                <option value="crypto">Crypto</option>
+            </select>
+            <div style="display:flex;gap:8px;">
+                <button class="btn btn-main" onclick="confirmAddStockData()" style="flex:1;">Toevoegen</button>
+                <button class="btn" onclick="hideAddStockData()" style="flex:1;">Annuleer</button>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- ============================================ -->
+<!-- LIVE PAGINA                                 -->
+<!-- ============================================ -->
+<div id="aandelen-page" class="tab-content">
+    <div class="header" style="margin-bottom:16px;">
+        <div class="header-titles"><h1>LIVE</h1></div>
+        <div style="display:flex;align-items:center;gap:10px;">
+            <span id="marktStatus" style="font-size:0.75rem;color:var(--text-muted);display:flex;align-items:center;gap:5px;"></span>
+            <button class="btn" onclick="loadMarktData(true)" style="font-size:0.8rem;padding:8px 14px;">↻ Vernieuwen</button>
+        </div>
+    </div>
+
+    <!-- Rij 1: VIX + Fear & Greed -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.5rem;">
+        <div class="card markt-section" style="display:flex;flex-direction:column;">
+            <div class="markt-section-header"><h3>VIX — VOLATILITEITSINDEX</h3><span id="dot-vix" class="markt-dot markt-dot-loading" style="margin-left:auto;" title="Laden…"></span></div>
+            <div style="display:flex;align-items:center;gap:20px;padding:6px 0;">
+                <div style="flex:1;">
+                    <div id="vixValue" style="font-size:2.2rem;font-weight:800;line-height:1;">–</div>
+                    <div id="vixChange" style="font-size:0.85rem;margin-top:4px;"></div>
+                    <div style="font-size:0.68rem;color:var(--text-muted);margin-top:5px;">CBOE Volatility Index (^VIX)</div>
+                </div>
+                <div id="vixLabelBox" style="text-align:center;padding:8px 14px;border-radius:10px;font-size:0.72rem;font-weight:800;letter-spacing:0.05em;"></div>
+            </div>
+            <div style="margin-top:auto;padding-top:10px;height:6px;border-radius:3px;background:linear-gradient(to right,#2ecc71,#f1c40f,#e67e22,#e74c3c);position:relative;">
+                <div id="vixNeedle" style="position:absolute;top:-4px;width:3px;height:14px;background:var(--text-main);border-radius:2px;transform:translateX(-50%);transition:left 0.8s ease;left:50%;"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:0.58rem;color:var(--text-muted);margin-top:3px;">
+                <span>Laag (&lt;15)</span><span>Normaal</span><span>Hoog (&gt;25)</span><span>Extreem (&gt;40)</span>
+            </div>
+        </div>
+
+        <div class="card markt-section" style="display:flex;flex-direction:column;">
+            <div class="markt-section-header"><h3>FEAR &amp; GREED INDEX</h3><span id="dot-fg" class="markt-dot markt-dot-loading" style="margin-left:auto;" title="Laden…"></span></div>
+            <div style="display:flex;gap:16px;padding:6px 0;">
+                <div style="flex:1;border-right:1px solid var(--border-color);padding-right:16px;">
+                    <div style="font-size:0.65rem;font-weight:700;color:var(--text-muted);letter-spacing:0.05em;margin-bottom:4px;">CRYPTO</div>
+                    <div id="fgValue" style="font-size:2rem;font-weight:800;line-height:1;">–</div>
+                    <div id="fgClassification" style="font-size:0.9rem;font-weight:700;margin-top:3px;"></div>
+                    <div id="fgYesterday" style="font-size:0.68rem;color:var(--text-muted);margin-top:4px;"></div>
+                </div>
+                <div style="flex:1;">
+                    <div style="font-size:0.65rem;font-weight:700;color:var(--text-muted);letter-spacing:0.05em;margin-bottom:4px;">AANDELEN</div>
+                    <div id="fgStockValue" style="font-size:2rem;font-weight:800;line-height:1;">–</div>
+                    <div id="fgStockClass" style="font-size:0.9rem;font-weight:700;margin-top:3px;"></div>
+                    <div id="fgStockPrev" style="font-size:0.68rem;color:var(--text-muted);margin-top:4px;"></div>
+                </div>
+            </div>
+            <div style="margin-top:auto;padding-top:10px;height:6px;border-radius:3px;background:linear-gradient(to right,#e74c3c,#e67e22,#f1c40f,#2ecc71,#27ae60);position:relative;">
+                <div id="fgNeedle" style="position:absolute;top:-4px;width:3px;height:14px;background:var(--text-main);border-radius:2px;transform:translateX(-50%);transition:left 0.8s ease;left:50%;"></div>
+                <div id="fgStockNeedle" style="position:absolute;top:-4px;width:3px;height:14px;background:var(--bolero);border-radius:2px;transform:translateX(-50%);transition:left 0.8s ease;left:50%;opacity:0.7;"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:0.58rem;color:var(--text-muted);margin-top:3px;">
+                <span>Extreme Fear</span><span>Fear</span><span>Neutral</span><span>Greed</span><span>Extreme Greed</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Rij 2: Marktdata -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
+        <div class="card markt-section">
+            <div class="markt-section-header"><h3>VALUTA</h3><span id="dot-fx" class="markt-dot markt-dot-loading" style="margin-left:auto;" title="Laden…"></span></div>
+            <table class="markt-table"><thead><tr><th>Paar</th><th>Koers</th></tr></thead>
+            <tbody id="mb-fx"></tbody></table>
+        </div>
+        <div class="card markt-section">
+            <div class="markt-section-header"><h3>CORE INDICES</h3><span id="dot-idx" class="markt-dot markt-dot-loading" style="margin-left:auto;" title="Laden…"></span></div>
+            <table class="markt-table"><thead><tr><th>Index</th><th>Koers</th><th>Dag △</th><th>Dag %</th></tr></thead>
+            <tbody id="mb-idx"></tbody></table>
+        </div>
+        <div class="card markt-section">
+            <div class="markt-section-header"><h3>COMMODITIES</h3><span id="dot-com" class="markt-dot markt-dot-loading" style="margin-left:auto;" title="Laden…"></span></div>
+            <table class="markt-table"><thead><tr><th>Grondstof</th><th>Koers</th><th>Dag △</th><th>Dag %</th></tr></thead>
+            <tbody id="mb-com"></tbody></table>
+        </div>
+        <div class="card markt-section">
+            <div class="markt-section-header"><h3>ENERGY</h3><span id="dot-nrg" class="markt-dot markt-dot-loading" style="margin-left:auto;" title="Laden…"></span></div>
+            <table class="markt-table"><thead><tr><th>Instrument</th><th>Koers</th><th>Dag △</th><th>Dag %</th></tr></thead>
+            <tbody id="mb-nrg"></tbody></table>
+        </div>
+        <div class="card markt-section" style="grid-column:span 2;">
+            <div class="markt-section-header"><h3>CRYPTO</h3><span id="dot-cry" class="markt-dot markt-dot-loading" style="margin-left:auto;" title="Laden…"></span></div>
+            <div style="overflow-x:auto;">
+            <table class="markt-table"><thead><tr><th>Coin</th><th>Koers (USD)</th><th>Dag △</th><th>Dag %</th><th>24h High</th><th>24h Low</th></tr></thead>
+            <tbody id="mb-cry"></tbody></table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================ -->
+<!-- HEATMAP PAGINA                              -->
+<!-- ============================================ -->
+<div id="heatmap-page" class="tab-content">
+    <div class="header" style="margin-bottom:16px;">
+        <div class="header-titles"><h1>HEATMAP</h1></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <button class="btn" id="hmCompactBtn" onclick="toggleHmCompact()" style="font-size:0.8rem;padding:8px 14px;">⊟ Compact</button>
+            <button class="btn" onclick="refreshHeatmapPage()" style="font-size:0.8rem;padding:8px 14px;">↻ Vernieuwen</button>
+            <span id="hmStatus" style="font-size:0.75rem;color:var(--text-muted);display:flex;align-items:center;gap:5px;"></span>
+        </div>
+    </div>
+
+    <!-- Tabs: Alle / Aandelen / ETFs / Crypto -->
+    <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
+        <button class="hm-tab-btn hm-sort-btn active" onclick="setHmTab('all',this)">Alle</button>
+        <button class="hm-tab-btn hm-sort-btn" onclick="setHmTab('stock',this)">Aandelen</button>
+        <button class="hm-tab-btn hm-sort-btn" onclick="setHmTab('etf',this)">ETFs</button>
+        <button class="hm-tab-btn hm-sort-btn" onclick="setHmTab('stock_etf',this)">Aandelen + ETFs</button>
+        <button class="hm-tab-btn hm-sort-btn" onclick="setHmTab('crypto',this)">Crypto</button>
+    </div>
+
+    <!-- Sorteer opties -->
+    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
+        <span style="font-size:0.72rem;color:var(--text-muted);font-weight:700;">SORTEER:</span>
+        <button class="hm-sort-btn active" onclick="setHmSort('pct',this)">Dag %</button>
+        <button class="hm-sort-btn" onclick="setHmSort('name',this)">Naam</button>
+        <button class="hm-sort-btn" onclick="setHmSort('value',this)">Koers</button>
+    </div>
+
+    <!-- Add stock modal -->
+    <div id="addStockModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:3000;align-items:center;justify-content:center;">
+        <div class="card" style="width:320px;padding:24px;position:relative;">
+            <h3 style="margin-bottom:16px;">Aandeel toevoegen</h3>
+            <input id="addStockTicker" placeholder="Ticker (bijv. AAPL)" class="cash-input-field" style="width:100%;border:1px solid var(--border-color);border-radius:8px;padding:10px;font-size:1rem;background:var(--bg-color);color:var(--text-main);margin-bottom:10px;">
+            <input id="addStockName" placeholder="Naam (bijv. Apple)" class="cash-input-field" style="width:100%;border:1px solid var(--border-color);border-radius:8px;padding:10px;font-size:1rem;background:var(--bg-color);color:var(--text-main);margin-bottom:16px;">
+            <div style="display:flex;gap:8px;">
+                <button class="btn btn-main" onclick="confirmAddStock()" style="flex:1;">Toevoegen</button>
+                <button class="btn" onclick="hideAddStock()" style="flex:1;">Annuleer</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="hmGrid" style="display:grid;grid-template-columns:repeat(auto-fill,130px);gap:8px;justify-content:start;"></div>
+</div>
+
+</div><!-- /container -->
+
+<!-- Doel modal (gebruikt door PORTFOLIO pagina) -->
+    <div id="doelModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:3000;align-items:center;justify-content:center;">
+        <div class="card" style="width:320px;padding:24px;">
+            <h3 style="margin-bottom:16px;">Doel instellen</h3>
+            <label style="font-size:0.75rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">Doelbedrag (€)</label>
+            <div style="display:flex;align-items:center;border:1px solid var(--border-color);border-radius:8px;padding:10px 14px;margin:6px 0 14px;background:var(--bg-color);">
+                <span style="font-size:1.1rem;font-weight:700;color:var(--text-muted);margin-right:6px;">€</span>
+                <input type="number" id="doelInput" placeholder="100000" style="border:none;background:transparent;color:var(--text-main);font-size:1.1rem;font-weight:700;outline:none;width:100%;padding:0;">
+            </div>
+            <label style="font-size:0.75rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">Streefdatum</label>
+            <input type="date" id="doelDatumInput" style="width:100%;border:1px solid var(--border-color);border-radius:8px;padding:10px;font-size:1rem;background:var(--bg-color);color:var(--text-main);margin:6px 0 18px;box-sizing:border-box;">
+            <div style="display:flex;gap:8px;">
+                <button class="btn btn-main" onclick="saveDoelModal()" style="flex:1;">Opslaan</button>
+                <button class="btn" onclick="closeDoelModal()" style="flex:1;">Annuleer</button>
+            </div>
+        </div>
+    </div>
+
+
+<script src="script.js"></script>
+</body>
+</html>
