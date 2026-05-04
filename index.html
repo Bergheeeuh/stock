@@ -15,6 +15,7 @@
     <div class="nav-item" onclick="switchTab('data-page', this); closeNav()">DATA</div>
     <div class="nav-item" onclick="switchTab('aandelen-page', this); closeNav()">LIVE</div>
     <div class="nav-item" onclick="switchTab('heatmap-page', this); closeNav()">HEATMAP</div>
+    <div class="nav-item" onclick="switchTab('analyse-page', this); closeNav()">ANALYSE</div>
 </div>
 <div id="overlay" class="overlay" onclick="closeNav()"></div>
 <div class="nav">
@@ -25,6 +26,7 @@
     <div style="display:flex; gap:10px; align-items:center;">
         <button class="btn btn-theme" onclick="toggleBlur()" title="Verberg Bedragen">👁️</button>
         <button class="btn btn-theme" onclick="toggleTheme()" id="themeBtn">🌙</button>
+        <button class="btn btn-theme" onclick="toggleFetchLog()" id="fetchLogBtn" title="Datafeed logboek">📋<span id="fetchLogBadge" class="fetch-log-badge" style="display:none"></span></button>
     </div>
 </div>
 
@@ -65,7 +67,7 @@
                     <button class="btn time-btn" onclick="setTpTimeFilter('2y',this)">2J</button>
                     <button class="btn time-btn" onclick="setTpTimeFilter('all',this)">ALLES</button>
                 </div>
-                <button class="btn" onclick="runPortfolioBackfill(true)" style="font-size:0.75rem;padding:6px 10px;">↻</button>
+                <button class="btn" onclick="initTestPortfolio(true)" style="font-size:0.75rem;padding:6px 10px;">↻</button>
             </div>
         </div>
         <!-- Benchmark toggles -->
@@ -664,6 +666,22 @@
     <div id="hmGrid" style="display:grid;grid-template-columns:repeat(auto-fill,130px);gap:8px;justify-content:start;"></div>
 </div>
 
+<!-- ============================================ -->
+<!-- ANALYSE PAGINA                              -->
+<!-- ============================================ -->
+<div id="analyse-page" class="tab-content">
+    <div class="header" style="margin-bottom:12px;">
+        <div class="header-titles"><h1>ANALYSE</h1></div>
+        <div style="display:flex;align-items:center;gap:10px;">
+            <button class="btn" onclick="initAnalysePage(true)" style="font-size:0.75rem;padding:4px 10px;" id="an-vernieuwen-btn">↻ Vernieuwen</button>
+            <span id="anStatus" style="font-size:0.75rem;color:var(--text-muted);white-space:nowrap;"></span>
+        </div>
+    </div>
+    <div class="card" style="padding:0;overflow:hidden;">
+        <div id="an-table-container" style="overflow-x:auto;-webkit-overflow-scrolling:touch;"></div>
+    </div>
+</div>
+
 </div><!-- /container -->
 
 <!-- Doel modal (gebruikt door PORTFOLIO pagina) -->
@@ -685,6 +703,21 @@
     </div>
 
 
-<script src="script.js"></script>
+<div id="fetchLogOverlay" class="fetch-log-overlay" onclick="toggleFetchLog()"></div>
+<div id="fetchLogPanel" class="fetch-log-panel">
+    <div class="fetch-log-header">
+        <span style="font-weight:700;font-size:0.85rem;letter-spacing:0.05em;">DATAFEED LOGBOEK</span>
+        <div style="display:flex;gap:6px;align-items:center;">
+            <button class="btn" style="font-size:0.7rem;padding:2px 8px;" onclick="initTestPortfolio(true)">↻ fetch</button>
+            <button class="btn" style="font-size:0.7rem;padding:2px 8px;" onclick="_flClear()">wis</button>
+            <button class="btn btn-theme" onclick="toggleFetchLog()">✕</button>
+        </div>
+    </div>
+    <div id="fetchLogList" class="fetch-log-list">
+        <div class="fetch-log-empty">Nog geen activiteit.</div>
+    </div>
+</div>
+
+<script src="script.js?v=6"></script>
 </body>
 </html>
