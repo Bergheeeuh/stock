@@ -6281,6 +6281,22 @@ function renderTpFromEnriched(allEnriched) {
     const sortOpts = { key: _tpSortKey, dir: _tpSortDir, fn: 'setTpSort' };
     renderBySector('tp-bySector', enriched, positionsValue, false, sortOpts);
     renderAllPositions(enriched, positionsValue, 'tp-allPositions', sortOpts);
+
+    // Startdatum + dagen
+    const bkForStart   = { all: 'value', Bolero: 'bolero', Degiro: 'degiro', Saxo: 'saxo' }[broker] || 'value';
+    const startDateStr = BROKER_HISTORY_START[broker] || PORTFOLIO_HISTORY_START;
+    const histStart    = loadPortfolioHistory().filter(h => h.date >= startDateStr && h[bkForStart] != null);
+    const startEl      = document.getElementById('tp-hero-start');
+    if (startEl && histStart.length > 0) {
+        startEl.style.display = '';
+        const startD = new Date(startDateStr);
+        const days   = Math.round((new Date() - startD) / 86400000);
+        const [y, m] = startDateStr.split('-');
+        document.getElementById('tp-startDate').textContent = `${m}/${y}`;
+        document.getElementById('tp-startDays').textContent = `${days.toLocaleString('nl-NL')} dagen`;
+    } else {
+        if (startEl) startEl.style.display = 'none';
+    }
 }
 
 function setTpBroker(broker, btn) {
@@ -7057,10 +7073,9 @@ async function initTestPortfolio(force = false) {
     const startEl = document.getElementById('tp-hero-start');
     if (startEl && histAll.length > 0) {
         startEl.style.display = '';
-        const firstEntry = histAll[0];
-        const startD     = new Date(firstEntry.date);
-        const days       = Math.round((new Date() - startD) / 86400000);
-        const [y, m]     = firstEntry.date.split('-');
+        const startD = new Date(startDateStr);
+        const days   = Math.round((new Date() - startD) / 86400000);
+        const [y, m] = startDateStr.split('-');
         document.getElementById('tp-startDate').textContent = `${m}/${y}`;
         document.getElementById('tp-startDays').textContent = `${days.toLocaleString('nl-NL')} dagen`;
     } else {
