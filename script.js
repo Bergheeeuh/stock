@@ -331,7 +331,7 @@ function applyTimeFilter(chartKey) {
     }
 
     // ── SWIPE NAVIGATIE ──────────────────────────────────────────────────────
-    const TABS = ['test-portfolio-page', 'data-page', 'aandelen-page', 'heatmap-page'];
+    const TABS = ['test-portfolio-page', 'data-page', 'aandelen-page', 'heatmap-page', 'analyse-page'];
     const TAB_NAV_ITEMS = () => document.querySelectorAll('.nav-item');
 
     function getActiveTabIndex() {
@@ -473,13 +473,14 @@ function applyTimeFilter(chartKey) {
         document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
         document.getElementById(id).classList.add('active');
         if (el) el.classList.add('active');
-        const labels = { 'test-portfolio-page':'PORTFOLIO', 'data-page':'DATA', 'aandelen-page':'LIVE', 'heatmap-page':'HEATMAP' };
+        const labels = { 'test-portfolio-page':'PORTFOLIO', 'data-page':'DATA', 'aandelen-page':'LIVE', 'heatmap-page':'HEATMAP', 'analyse-page':'ANALYSE' };
         const navLabel = document.querySelector('.nav span[style*="font-weight"]');
         if (navLabel) navLabel.textContent = labels[id] || '';
         closeNav();
         if (id === 'aandelen-page') loadMarktData(true);
         if (id === 'data-page') { initTestDataPage(); renderAandelenData(); renderCryptoData(); }
         if (id === 'heatmap-page') initHeatmapPage();
+        if (id === 'analyse-page') initAnalysePage();
 
         // LIVE pagina: slimme auto-refresh; stop bij verlaten
         if (_apAutoRefreshInterval) { clearInterval(_apAutoRefreshInterval); _apAutoRefreshInterval = null; }
@@ -1941,18 +1942,34 @@ function renderWeeklyReturns() {
     // Yahoo Finance via corsproxy.io — alleen nog voor marktdata-widgets (futures, indices)
     // Niet meer gebruikt voor portfolio-posities (te onnauwkeurig voor dagrendementen)
     async function yhQuote(ticker) {
-        const bust = Math.floor(Date.now() / 60000); // verandert elke minuut
-        const url = `https://corsproxy.io/?url=${encodeURIComponent('https://query2.finance.yahoo.com/v8/finance/chart/' + ticker + '?interval=1d&range=2d&_=' + bust)}`;
+        const p2 = Math.floor(Date.now() / 1000) + 86400;
+        const p1 = p2 - 30 * 86400; // 30 dagen: voorkomt zstd-compressie bij kleine ranges
+        const yahooUrl = 'https://query2.finance.yahoo.com/v8/finance/chart/' + ticker + '?interval=1d&period1=' + p1 + '&period2=' + p2;
+        // Gebruik allorigins als tweede proxy zodat rate limit van corsproxy.io (historische data) niet deelt
+        const proxies = [
+            `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`,
+            `https://corsproxy.io/?url=${encodeURIComponent(yahooUrl)}`,
+        ];
+        let r = null;
+        for (const url of proxies) {
+            try { const res = await fetch(url); if (res.ok) { r = res; break; } } catch {}
+        }
+        if (!r) return null;
         try {
-            const r = await fetch(url, { cache: 'no-store' });
-            if (!r.ok) throw new Error(r.status);
             const data = await r.json();
-            const meta = data?.chart?.result?.[0]?.meta;
+            const result = data?.chart?.result?.[0];
+            const meta = result?.meta;
             if (!meta || !meta.regularMarketPrice) return null;
-            const price     = meta.regularMarketPrice;
-            const prevClose = meta.chartPreviousClose ?? meta.previousClose ?? price;
-            const change    = price - prevClose;
-            const pct       = prevClose ? (change / prevClose) * 100 : 0;
+            const price  = meta.regularMarketPrice;
+            // Gebruik de voorlaatste slotkoers uit de reeks als vorige-dag-close
+            // (chartPreviousClose = begin van de chartperiode, niet gisteren)
+            const closes = result?.indicators?.quote?.[0]?.close || [];
+            const validCloses = closes.filter(c => c != null);
+            const prevClose = validCloses.length >= 2
+                ? validCloses[validCloses.length - 2]
+                : (meta.chartPreviousClose ?? price);
+            const change = price - prevClose;
+            const pct    = prevClose ? (change / prevClose) * 100 : 0;
             return { price, change, pct, high: meta.regularMarketDayHigh, low: meta.regularMarketDayLow, time: meta.regularMarketTime ? new Date(meta.regularMarketTime * 1000) : new Date(), source: 'yahoo' };
         } catch { return null; }
     }
@@ -2551,6 +2568,10 @@ function renderWeeklyReturns() {
             localStorage.setItem('hm_stocks_v2', JSON.stringify(hmStocks));
         }
         localStorage.setItem('hm_stocks_migration_v40', '1');
+    }
+    // Zorg dat hm_stocks_v2 altijd gevuld is zodat andere pagina's (ANALYSE) eruit kunnen lezen
+    if (!localStorage.getItem('hm_stocks_v2')) {
+        localStorage.setItem('hm_stocks_v2', JSON.stringify(hmStocks));
     }
     let hmSortMode  = 'pct';
     let hmTabMode   = 'all';   // 'all' | 'stock' | 'etf'
@@ -3905,18 +3926,25 @@ function isEuropeanTicker(ticker) {
 // - Europese tickers (.PA/.DE/.MI/.L) → Yahoo (source: 'yahoo', paarse bol)
 // - Amerikaanse tickers → Finnhub (source: 'finnhub', groene bol)
 async function loadQuoteForPosition(s) {
+    const t0 = Date.now();
+    let q = null, err = null;
     if (s.type === 'crypto') {
         const sym = s.ticker.toUpperCase().replace(/-USD$/, '') + 'USDT';
-        let q = await binanceQuote(sym).catch(() => null);
-        if (!q) q = await fhQuote('BINANCE:' + sym).catch(() => null);
-        return q;
+        q = await binanceQuote(sym).catch(() => null);
+        if (!q) q = await fhQuote('BINANCE:' + sym).catch(e => { err = e?.message; return null; });
+    } else if (isEuropeanTicker(s.ticker)) {
+        q = await yhQuote(s.ticker).catch(e => { err = e?.message; return null; });
+        if (!q) err = err || 'null';
+    } else {
+        q = await fhQuote(s.ticker).catch(e => { err = e?.message; return null; });
+        if (!q) {
+            err = err || 'Finnhub null';
+            q = await yhQuote(s.ticker).catch(e => { err = e?.message; return null; });
+        }
+        if (!q) err = err || 'null';
     }
-    // Europese ticker → Yahoo (nauwkeurigheid is hier beperkt maar er is geen alternatief)
-    if (isEuropeanTicker(s.ticker)) {
-        return await yhQuote(s.ticker).catch(() => null);
-    }
-    // Amerikaanse ticker → Finnhub (direct, nauwkeurige dag%)
-    return await fhQuote(s.ticker).catch(() => null);
+    _flQLOg(s.ticker, q?.source || (isEuropeanTicker(s.ticker) ? 'Yahoo' : 'Finnhub'), q?.price || null, Date.now() - t0, err);
+    return q;
 }
 
 // Quote-cache: voorkomt herhaaldelijk ophalen bij snel refreshen (55s TTL)
@@ -3939,13 +3967,13 @@ async function loadQuoteCached(s) {
 
 // Gebatcht laden: max 8 tegelijk, 50ms pauze tussen batches → sneller laden, vermijdt burst rate-limit
 async function loadAllQuotesBatched(positions) {
-    const BATCH = 8;
+    const BATCH = 3; // Finnhub free tier: ~60 req/min → max 3 parallel, 700ms pauze
     const results = [];
     for (let i = 0; i < positions.length; i += BATCH) {
         const batch = positions.slice(i, i + BATCH);
         const batchResults = await Promise.all(batch.map(s => loadQuoteCached(s)));
         results.push(...batchResults);
-        if (i + BATCH < positions.length) await new Promise(r => setTimeout(r, 50));
+        if (i + BATCH < positions.length) await new Promise(r => setTimeout(r, 700));
     }
     return results;
 }
@@ -4502,6 +4530,14 @@ async function fetchHistoricalPrice(ticker, startTs) {
             return startClose;
         }
     } catch {}
+    // Fallback: Stooq
+    const startDate = new Date(startTs - 86400000).toISOString().slice(0, 10);
+    const endDate = new Date(startTs + 14 * 86400000).toISOString().slice(0, 10);
+    const stooqSeries = await fetchPriceSeriesStooq(ticker, startDate, endDate);
+    if (stooqSeries) {
+        const val = Object.values(stooqSeries).find(v => v != null);
+        if (val) { _cpHistCache[cacheKey] = val; saveCpHistCache(); return val; }
+    }
     return null;
 }
 
@@ -5436,23 +5472,165 @@ function needsBackfill() {
     try {
         const cached = JSON.parse(localStorage.getItem(PORTFOLIO_BACKFILL_KEY) || 'null');
         if (!cached) return true;
-        return Date.now() - cached.fetched > 24 * 60 * 60 * 1000; // eens per dag vernieuwen
+        const ttl = cached.failed ? 10 * 60 * 1000 : 24 * 60 * 60 * 1000;
+        return Date.now() - cached.fetched > ttl;
     } catch { return true; }
 }
 
 // Haalt dagelijkse slotkoersen op van Yahoo Finance voor een tijdsbereik
+// ---------- DATAFEED LOGBOEK ----------
+const _flEntries = new Map();
+function _flStart(ticker) {
+    _flEntries.set(ticker, { ticker, status: 'loading', source: 'Yahoo', points: 0, t0: Date.now() });
+    _flRender();
+}
+function _flFallback(ticker, err) {
+    const e = _flEntries.get(ticker);
+    if (e) { e.source = 'Stooq'; e.yahooErr = err || null; _flRender(); }
+}
+function _flDone(ticker, source, points) {
+    const e = _flEntries.get(ticker);
+    if (!e) return;
+    e.status = source === 'Stooq' ? 'ok-stooq' : 'ok-yahoo';
+    e.source = source; e.points = points; e.ms = Date.now() - e.t0;
+    _flRender();
+}
+function _flFail(ticker, err) {
+    const e = _flEntries.get(ticker);
+    if (!e) return;
+    e.status = 'fail'; e.ms = Date.now() - e.t0; e.yahooErr = err || null;
+    _flRender();
+}
+function _flInfo(msg) {
+    _flEntries.set('__info__' + Date.now(), { ticker: msg, status: 'info', t0: Date.now() });
+    _flRender();
+}
+function _flClear() { _flEntries.clear(); _flQMap.clear(); _flRender(); }
+function _flClearHist() { _flEntries.clear(); _flRender(); }
+// Live koersen log
+const _flQMap = new Map();
+function _flQLOg(ticker, source, price, ms, err) {
+    _flQMap.set(ticker, { ticker, source, price, ms, err: err || null });
+    _flRender();
+}
+
+function _flRender() {
+    const list = document.getElementById('fetchLogList');
+    const badge = document.getElementById('fetchLogBadge');
+    const histLoading = [..._flEntries.values()].filter(e => e.status === 'loading').length;
+    const histFailed  = [..._flEntries.values()].filter(e => e.status === 'fail').length;
+    const quoteFailed = [..._flQMap.values()].filter(e => !e.price).length;
+    const totalFailed = histFailed + quoteFailed;
+    if (badge) {
+        if (histLoading > 0) { badge.textContent = histLoading; badge.style.display = 'block'; badge.style.background = 'var(--text-muted)'; }
+        else if (totalFailed > 0) { badge.textContent = totalFailed; badge.style.display = 'block'; badge.style.background = 'var(--danger)'; }
+        else { badge.style.display = 'none'; }
+    }
+    if (!list) return;
+    if (_flEntries.size === 0 && _flQMap.size === 0) { list.innerHTML = '<div class="fetch-log-empty">Nog geen activiteit.</div>'; return; }
+
+    let html = '';
+
+    // --- HISTORISCH ---
+    if (_flEntries.size > 0) {
+        const entries = [..._flEntries.values()];
+        const infoEntry = entries.find(e => e.status === 'info');
+        const dataEntries = entries.filter(e => e.status !== 'info');
+        const ok = dataEntries.filter(e => e.status === 'ok-yahoo' || e.status === 'ok-stooq').length;
+        const fail = dataEntries.filter(e => e.status === 'fail').length;
+        const loading = dataEntries.filter(e => e.status === 'loading').length;
+        html += `<div class="fl-section-head">HISTORISCH`;
+        if (dataEntries.length > 0) html += ` <span class="fl-summary">✅${ok} ${fail > 0 ? `❌${fail} ` : ''}${loading > 0 ? `⏳${loading}` : ''}</span>`;
+        html += `</div>`;
+        if (infoEntry) html += `<div class="fl-row fl-info">ℹ️ ${infoEntry.ticker}</div>`;
+        // Toon enkel fallbacks/fouten; successen in compacte stijl
+        const showAll = dataEntries.length <= 8 || dataEntries.some(e => e.status === 'fail' || e.status === 'ok-stooq');
+        const toShow = showAll ? dataEntries : dataEntries.filter(e => e.status !== 'ok-yahoo');
+        toShow.reverse().forEach(e => {
+            const icon = e.status === 'loading' ? '⏳' : e.status === 'fail' ? '❌' : e.status === 'ok-stooq' ? '🟡' : '✅';
+            const detail = e.status === 'loading' ? `${e.source}…`
+                : e.status === 'fail' ? `geen data${e.yahooErr ? ` · ${e.yahooErr}` : ''}`
+                : e.status === 'ok-stooq' ? `Stooq · ${e.points}p · ${e.ms}ms${e.yahooErr ? ` (Yahoo: ${e.yahooErr})` : ''}`
+                : `Yahoo · ${e.points}p · ${e.ms}ms`;
+            html += `<div class="fl-row ${e.status === 'fail' ? 'fl-fail' : e.status === 'ok-stooq' ? 'fl-stooq' : ''}">${icon} <b>${e.ticker}</b> <span class="fl-detail">${detail}</span></div>`;
+        });
+        if (!showAll && dataEntries.length > toShow.length) {
+            const rest = dataEntries.length - toShow.length;
+            html += `<div class="fl-row fl-muted">+ ${rest} via Yahoo (ok)</div>`;
+        }
+    }
+
+    // --- LIVE KOERSEN ---
+    if (_flQMap.size > 0) {
+        const qEntries = [..._flQMap.values()];
+        const qOk = qEntries.filter(e => e.price).length;
+        const qFail = qEntries.filter(e => !e.price).length;
+        html += `<div class="fl-section-head" style="margin-top:8px">LIVE KOERSEN <span class="fl-summary">✅${qOk}${qFail > 0 ? ` ❌${qFail}` : ''}</span></div>`;
+        qEntries.filter(e => !e.price).forEach(e => {
+            const retryLabel = e.retrying ? ` · ⟳ poging ${e.retrying}` : '';
+            html += `<div class="fl-row fl-fail">${e.retrying ? '⟳' : '❌'} <b>${e.ticker}</b> <span class="fl-detail">geen koers${e.err ? ` · ${e.err}` : ''}${retryLabel}</span></div>`;
+        });
+        qEntries.filter(e => e.price).forEach(e => {
+            html += `<div class="fl-row">✅ <b>${e.ticker}</b> <span class="fl-detail">${e.source} · ${e.ms}ms</span></div>`;
+        });
+    }
+
+    list.innerHTML = html;
+}
+function toggleFetchLog() {
+    document.getElementById('fetchLogPanel')?.classList.toggle('open');
+    document.getElementById('fetchLogOverlay')?.classList.toggle('open');
+}
+// ---------- EINDE LOGBOEK ----------
+
+function yahooTickerToStooq(ticker) {
+    if (ticker === 'EURUSD=X') return 'EURUSD';
+    const map = { '.AS': '.NL', '.PA': '.FR', '.MI': '.IT', '.L': '.UK', '.BR': '.BE' };
+    for (const [y, s] of Object.entries(map)) {
+        if (ticker.endsWith(y)) return ticker.slice(0, -y.length) + s;
+    }
+    if (ticker.endsWith('.DE')) return ticker;
+    if (!ticker.includes('.')) return ticker + '.US';
+    return ticker;
+}
+
+async function fetchPriceSeriesStooq(ticker, startDate, endDate) {
+    const stooqTicker = yahooTickerToStooq(ticker);
+    const d1 = startDate.replace(/-/g, '');
+    const d2 = endDate.replace(/-/g, '');
+    const url = `https://corsproxy.io/?url=${encodeURIComponent(
+        `https://stooq.com/q/d/l/?s=${stooqTicker}&d1=${d1}&d2=${d2}&i=d`
+    )}`;
+    try {
+        const r = await fetch(url);
+        if (!r.ok) throw new Error(r.status);
+        const text = await r.text();
+        const lines = text.trim().split('\n').slice(1);
+        const series = {};
+        for (const line of lines) {
+            const [date, , , , close] = line.split(',');
+            if (date && close && close.trim() !== 'N/D') {
+                series[date] = parseFloat(close);
+            }
+        }
+        return Object.keys(series).length > 0 ? series : null;
+    } catch { return null; }
+}
+
 async function fetchPriceSeries(ticker, startDate, endDate) {
+    _flStart(ticker);
     const p1 = Math.floor(new Date(startDate).getTime() / 1000);
     const p2 = Math.floor(new Date(endDate).getTime() / 1000) + 86400;
     const url = `https://corsproxy.io/?url=${encodeURIComponent(
         `https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&period1=${p1}&period2=${p2}`
     )}`;
+    let yahooErr = null;
     try {
         const r = await fetch(url);
-        if (!r.ok) throw new Error(r.status);
+        if (!r.ok) { yahooErr = `HTTP ${r.status}`; throw new Error(r.status); }
         const data = await r.json();
         const result = data?.chart?.result?.[0];
-        if (!result) return {};
+        if (!result) { yahooErr = data?.chart?.error?.description || 'geen data'; throw new Error('no result'); }
         const timestamps = result.timestamp || [];
         const closes = result.indicators?.quote?.[0]?.close || [];
         const series = {};
@@ -5462,8 +5640,14 @@ async function fetchPriceSeries(ticker, startDate, endDate) {
                 series[date] = closes[i];
             }
         });
-        return series;
-    } catch { return {}; }
+        if (Object.keys(series).length > 0) { _flDone(ticker, 'Yahoo', Object.keys(series).length); return series; }
+        yahooErr = '0 punten';
+    } catch (e) { if (!yahooErr) yahooErr = e.message || 'fout'; }
+    _flFallback(ticker, yahooErr);
+    const stooqResult = await fetchPriceSeriesStooq(ticker, startDate, endDate);
+    if (stooqResult) { _flDone(ticker, 'Stooq', Object.keys(stooqResult).length); return stooqResult; }
+    _flFail(ticker, yahooErr);
+    return {};
 }
 
 async function buildTxBasedHistory() {
@@ -5569,7 +5753,19 @@ async function buildTxBasedHistory() {
 }
 
 async function runPortfolioBackfill(force = false) {
-    if (!force && !needsBackfill()) { renderPortfolioHistoryChart(); return; }
+    if (!force && !needsBackfill()) {
+        const cached = JSON.parse(localStorage.getItem(PORTFOLIO_BACKFILL_KEY) || 'null');
+        const uur = cached ? new Date(cached.fetched).toLocaleTimeString('nl', {hour:'2-digit',minute:'2-digit'}) : '?';
+        if (_flEntries.size === 0) {
+            _flInfo(`Cache geladen (laatste fetch: ${uur}) — klik ↻ fetch om opnieuw op te halen`);
+        }
+        renderPortfolioHistoryChart();
+        return;
+    }
+    _flClearHist();
+    _flInfo('Prijsdata ophalen gestart…');
+    document.getElementById('fetchLogPanel')?.classList.add('open');
+    document.getElementById('fetchLogOverlay')?.classList.add('open');
 
     const loadingEl = document.getElementById('tp-historyLoading');
     const canvas    = document.getElementById('tp-historyChart');
@@ -5612,6 +5808,7 @@ async function runPortfolioBackfill(force = false) {
         .sort();
 
     if (sortedDates.length === 0) {
+        localStorage.setItem(PORTFOLIO_BACKFILL_KEY, JSON.stringify({ fetched: Date.now(), failed: true }));
         if (loadingEl) loadingEl.style.display = 'none';
         if (emptyEl)   emptyEl.style.display   = '';
         return;
@@ -6871,7 +7068,7 @@ async function initTestPortfolio(force = false) {
     }
 
     // Backfill historische data (eens per dag automatisch, of bij 'all' filter)
-    if (_tpBrokerFilter === 'all') await runPortfolioBackfill();
+    if (_tpBrokerFilter === 'all') await runPortfolioBackfill(force);
 
     // Meest recente koerstijd + aantal geladen quotes
     const livePositions = enriched;
@@ -6910,6 +7107,11 @@ async function retryFailedQuotes(enriched, cashEur, usdEur, attempt) {
     const failed = enriched.filter(x => x.noQuote);
     if (failed.length === 0) return;
 
+    // Markeer als herprobeert in logboek
+    failed.forEach(x => {
+        const e = _flQMap.get(x.ticker);
+        if (e) { e.retrying = attempt; _flRender(); }
+    });
     failed.forEach(x => _quoteCache.delete((x.ticker || '') + '|' + (x.type || '')));
     const retried = await loadAllQuotesBatched(failed);
 
@@ -6957,4 +7159,334 @@ async function retryFailedQuotes(enriched, cashEur, usdEur, attempt) {
         `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dotCol};margin-right:5px;vertical-align:middle;box-shadow:0 0 4px ${dotCol};"></span>${label}`;
 
     if (!allOk) scheduleQuoteRetry(enriched, cashEur, usdEur, attempt + 1);
+}
+
+// ============================================================
+// ANALYSE PAGINA
+// ============================================================
+
+let _anSortKey = 'ticker';
+let _anSortDir = 'asc';
+let _anData = null;
+let _anMetricsCache = {};
+let _anCacheTime = 0;
+const AN_CACHE_KEY = 'an_data_cache_v1';
+
+function setAnSort(key) {
+    if (_anSortKey === key) {
+        _anSortDir = _anSortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        _anSortKey = key;
+        _anSortDir = key === 'ticker' || key === 'name' ? 'asc' : 'desc';
+    }
+    renderAnalyseTable();
+}
+
+function renderAnalyseTable() {
+    const el = document.getElementById('an-table-container');
+    if (!el || !_anData) return;
+
+    const sk = _anSortKey;
+    const sd = _anSortDir;
+    const sorted = [..._anData].sort((a, b) => {
+        let av = a[sk], bv = b[sk];
+        if (sk === 'ticker' || sk === 'name' || sk === 'waardering' || sk === 'consensus') {
+            if (sk === 'consensus') { av = av?.label || ''; bv = bv?.label || ''; }
+            else { av = (av || '').toLowerCase(); bv = (bv || '').toLowerCase(); }
+            return sd === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+        }
+        if (av == null) av = sd === 'asc' ? Infinity : -Infinity;
+        if (bv == null) bv = sd === 'asc' ? Infinity : -Infinity;
+        return sd === 'asc' ? av - bv : bv - av;
+    });
+
+    const arrow = k => sk === k ? `<span class="ap-sort-arrow">${sd === 'asc' ? '▲' : '▼'}</span>` : '';
+    const thBase = 'padding:10px 12px;border-bottom:1px solid var(--border-color);font-size:0.72rem;letter-spacing:0.04em;white-space:nowrap;';
+    const mkTh = (key, label, align) => {
+        const cls = `ap-sort-th${sk === key ? ' active' : ''}`;
+        const style = `${thBase}${align ? 'text-align:' + align + ';' : ''}`;
+        return `<th class="${cls}" onclick="setAnSort('${key}')" style="${style}">${label}${arrow(key)}</th>`;
+    };
+
+    const fmtPrice = (v, currency) => {
+        if (v == null) return '<span style="color:var(--text-muted)">—</span>';
+        const sym = currency === 'EUR' ? '€' : '$';
+        return `${sym}${v.toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    };
+    const fmtPe = v => v != null && v > 0 ? v.toFixed(1) : '<span style="color:var(--text-muted)">N/A</span>';
+    const fmtPct = v => {
+        if (v == null) return '<span style="color:var(--text-muted)">—</span>';
+        const col = v <= -30 ? 'var(--danger)' : v <= -10 ? '#f39c12' : 'var(--success)';
+        return `<span style="color:${col};font-weight:600;">${v.toFixed(1)}%</span>`;
+    };
+    const fmtWaardering = v => {
+        if (!v) return '<span style="color:var(--text-muted)">—</span>';
+        const cfg = {
+            'ondergewaardeerd': { col: 'var(--success)', label: '▼ Onder' },
+            'neutraal':         { col: 'var(--text-muted)', label: '● Neutraal' },
+            'overgewaardeerd':  { col: 'var(--danger)', label: '▲ Over' },
+        }[v];
+        return `<span style="color:${cfg.col};font-weight:600;font-size:0.75rem;">${cfg.label}</span>`;
+    };
+    const fmtRangeBar = (pct, low, high, currency) => {
+        if (pct == null) return '<span style="color:var(--text-muted)">—</span>';
+        const barCol  = pct >= 70 ? 'var(--success)' : pct >= 35 ? '#f39c12' : 'var(--danger)';
+        const sym     = currency === 'EUR' ? '€' : '$';
+        const fmtN    = v => v != null ? sym + v.toLocaleString('nl-NL', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) : '';
+        const title   = `${fmtN(low)} – ${fmtN(high)} | positie: ${pct.toFixed(0)}%`;
+        return `<div title="${title}" style="display:flex;align-items:center;gap:5px;">
+            <div style="flex:1;height:6px;background:var(--border-color);border-radius:3px;min-width:60px;position:relative;">
+                <div style="position:absolute;left:0;top:0;height:6px;width:${pct.toFixed(1)}%;background:${barCol};border-radius:3px;"></div>
+            </div>
+            <span style="font-size:0.72rem;color:var(--text-muted);white-space:nowrap;">${pct.toFixed(0)}%</span>
+        </div>`;
+    };
+    const fmtConsensus = c => {
+        if (!c) return '<span style="color:var(--text-muted)">—</span>';
+        const cfg = {
+            'koop':    { col: 'var(--success)', label: '● Koop' },
+            'houd':    { col: 'var(--text-muted)', label: '● Houd' },
+            'verkoop': { col: 'var(--danger)', label: '● Verkoop' },
+        }[c.label];
+        return `<span style="color:${cfg.col};font-weight:600;font-size:0.75rem;" title="Koop: ${c.koop} · Houd: ${c.houd} · Verkoop: ${c.verkoop}">${cfg.label} <span style="color:var(--text-muted);font-weight:400;">${c.koop}/${c.houd}/${c.verkoop}</span></span>`;
+    };
+
+    let html = `<table style="width:100%;min-width:820px;border-collapse:collapse;font-size:0.82rem;table-layout:fixed;">
+        <colgroup>
+            <col style="width:85px;">
+            <col style="min-width:140px;">
+            <col style="width:90px;">
+            <col style="width:140px;">
+            <col style="width:70px;">
+            <col style="width:95px;">
+            <col style="width:130px;">
+        </colgroup>
+        <thead><tr style="background:var(--bg-color);">
+            ${mkTh('ticker', 'TICKER')}
+            ${mkTh('name', 'NAAM')}
+            ${mkTh('price', 'PRIJS', 'right')}
+            ${mkTh('rangePct', '52W RANGE')}
+            ${mkTh('pe', 'P/E', 'right')}
+            ${mkTh('waardering', 'WAARDERING')}
+            ${mkTh('consensus', 'CONSENSUS')}
+        </tr></thead>
+        <tbody>`;
+
+    for (const row of sorted) {
+        const isComplete = !row.loading && row.price != null;
+        const dot = row.loading
+            ? `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--border-color);vertical-align:middle;" title="Laden…"></span>`
+            : isComplete
+                ? `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--success);vertical-align:middle;" title="Volledig geladen"></span>`
+                : `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#f39c12;vertical-align:middle;" title="Gedeeltelijk geladen (geen koers)"></span>`;
+
+        const dataCells = row.loading
+            ? `<td colspan="5" style="padding:10px 12px;color:var(--text-muted);font-size:0.78rem;">laden…</td>`
+            : `<td style="padding:10px 12px;text-align:right;">${fmtPrice(row.price, row.currency)}</td>
+               <td style="padding:10px 14px;">${fmtRangeBar(row.rangePct, row.low52w, row.high52w, row.currency)}</td>
+               <td style="padding:10px 12px;text-align:right;">${fmtPe(row.pe)}</td>
+               <td style="padding:10px 12px;">${fmtWaardering(row.waardering)}</td>
+               <td style="padding:10px 12px;">${fmtConsensus(row.consensus)}</td>`;
+
+        html += `<tr style="border-bottom:1px solid var(--border-color);">
+            <td style="padding:10px 12px;font-weight:700;font-family:monospace;">${dot} ${row.ticker}</td>
+            <td style="padding:10px 12px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${row.name}">${row.name}</td>
+            ${dataCells}
+        </tr>`;
+    }
+
+    html += `</tbody></table>`;
+    el.innerHTML = html;
+}
+
+async function fetchAnYahooQuote(ticker) {
+    try {
+        const p2 = Math.floor(Date.now() / 1000) + 86400;
+        const p1 = p2 - 30 * 86400;
+        const yahooUrl = `https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&period1=${p1}&period2=${p2}`;
+        const proxies = [
+            `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`,
+            `https://corsproxy.io/?url=${encodeURIComponent(yahooUrl)}`,
+        ];
+        let r = null;
+        for (const url of proxies) {
+            try { const res = await fetch(url); if (res.ok) { r = res; break; } } catch {}
+        }
+        if (!r) return null;
+        const data = await r.json();
+        const meta = data?.chart?.result?.[0]?.meta;
+        if (!meta) return null;
+        const price = meta.regularMarketPrice || meta.chartPreviousClose || null;
+        return price && price !== 0 ? price : null;
+    } catch { return null; }
+}
+
+async function fetchAnFinnhubQuote(ticker, attempt = 0) {
+    const FINNHUB_KEY = 'd4g9371r01qm5b34gb90d4g9371r01qm5b34gb9g';
+    try {
+        const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(ticker)}&token=${FINNHUB_KEY}`);
+        if (r.status === 429) {
+            if (attempt < 4) {
+                await new Promise(w => setTimeout(w, 1500 * (attempt + 1)));
+                return fetchAnFinnhubQuote(ticker, attempt + 1);
+            }
+            return null;
+        }
+        if (!r.ok) return null;
+        const d = await r.json();
+        return (d.c && d.c !== 0) ? d.c : (d.pc && d.pc !== 0) ? d.pc : null;
+    } catch { return null; }
+}
+
+async function fetchAnQuote(ticker) {
+    // Europese tickers (.PA .DE .MI .L etc.) → Yahoo Finance
+    if (/\.[A-Z]{1,2}$/.test(ticker)) return fetchAnYahooQuote(ticker);
+    // US tickers → Finnhub met retry, Yahoo als fallback
+    const fh = await fetchAnFinnhubQuote(ticker);
+    if (fh != null) return fh;
+    return fetchAnYahooQuote(ticker);
+}
+
+async function fetchAnMetrics(ticker) {
+    const FINNHUB_KEY = 'd4g9371r01qm5b34gb90d4g9371r01qm5b34gb9g';
+    try {
+        const r = await fetch(`https://finnhub.io/api/v1/stock/metric?symbol=${encodeURIComponent(ticker)}&metric=all&token=${FINNHUB_KEY}`);
+        if (!r.ok) return null;
+        const d = await r.json();
+        const m = d?.metric;
+        if (!m) return null;
+        return {
+            high52w: m['52WeekHigh'] ?? null,
+            low52w:  m['52WeekLow']  ?? null,
+            pe: m['peBasicExclExtraTTM'] ?? m['peTTM'] ?? null,
+        };
+    } catch { return null; }
+}
+
+async function fetchAnConsensus(ticker) {
+    const FINNHUB_KEY = 'd4g9371r01qm5b34gb90d4g9371r01qm5b34gb9g';
+    try {
+        const r = await fetch(`https://finnhub.io/api/v1/stock/recommendation?symbol=${encodeURIComponent(ticker)}&token=${FINNHUB_KEY}`);
+        if (!r.ok) return null;
+        const d = await r.json();
+        if (!d || !d.length) return null;
+        const latest = d[0];
+        const koop    = (latest.strongBuy  || 0) + (latest.buy  || 0);
+        const houd    = latest.hold  || 0;
+        const verkoop = (latest.strongSell || 0) + (latest.sell || 0);
+        const total   = koop + houd + verkoop;
+        if (!total) return null;
+        const label = koop > houd && koop > verkoop ? 'koop'
+                    : verkoop > houd && verkoop > koop ? 'verkoop'
+                    : 'houd';
+        return { label, koop, houd, verkoop };
+    } catch { return null; }
+}
+
+async function initAnalysePage(force = false) {
+    const statusEl = document.getElementById('anStatus');
+    const btnEl = document.getElementById('an-vernieuwen-btn');
+
+    const DEFAULT_STOCKS_AN = [
+        {ticker:'NVDA',name:'NVIDIA Corporation',type:'stock',currency:'USD'},{ticker:'PYPL',name:'PayPal Holdings',type:'stock',currency:'USD'},
+        {ticker:'BMNR',name:'Bitmine Immersion Technologies',type:'stock',currency:'USD'},{ticker:'ABCL',name:'AbCellera Biologics',type:'stock',currency:'USD'},
+        {ticker:'AMZN',name:'Amazon.com',type:'stock',currency:'USD'},{ticker:'APLD',name:'Applied Digital Corporation',type:'stock',currency:'USD'},
+        {ticker:'ACHR',name:'Archer Aviation',type:'stock',currency:'USD'},{ticker:'CRCL',name:'Circle Internet Group',type:'stock',currency:'USD'},
+        {ticker:'CRWV',name:'CoreWeave',type:'stock',currency:'USD'},{ticker:'CRDO',name:'Credo Technology Group',type:'stock',currency:'USD'},
+        {ticker:'IONQ',name:'IonQ',type:'stock',currency:'USD'},{ticker:'KEEL',name:'Keel Infrastructure Corporation',type:'stock',currency:'USD'},
+        {ticker:'LMND',name:'Lemonade',type:'stock',currency:'USD'},{ticker:'MRLN',name:'Merlin',type:'stock',currency:'USD'},
+        {ticker:'MSFT',name:'Microsoft Corporation',type:'stock',currency:'USD'},{ticker:'OUST',name:'Ouster',type:'stock',currency:'USD'},
+        {ticker:'RR',name:'Richtech Robotics',type:'stock',currency:'USD'},{ticker:'SBET',name:'SharpLink',type:'stock',currency:'USD'},
+    ];
+    let allHmStocks = JSON.parse(localStorage.getItem('hm_stocks_v2') || 'null') || DEFAULT_STOCKS_AN;
+    allHmStocks = allHmStocks.map(s => ({ type: 'stock', currency: 'USD', ...s }));
+    const stocks = allHmStocks.filter(s => s.type === 'stock');
+    if (!stocks.length) {
+        const el = document.getElementById('an-table-container');
+        if (el) el.innerHTML = '<p style="padding:20px;color:var(--text-muted);">Geen aandelen gevonden. Voeg ze toe via DATA.</p>';
+        return;
+    }
+
+    // Dagelijkse cache: gebruik opgeslagen data als die van vandaag is
+    const today = new Date().toISOString().slice(0, 10);
+    if (!force) {
+        try {
+            const cached = JSON.parse(localStorage.getItem(AN_CACHE_KEY) || 'null');
+            if (cached && cached.date === today && Array.isArray(cached.data) && cached.data.length) {
+                _anData = cached.data;
+                renderAnalyseTable();
+                if (statusEl) statusEl.innerHTML = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--success);margin-right:5px;vertical-align:middle;"></span>Cache van vandaag`;
+                return;
+            }
+        } catch {}
+    }
+
+    if (btnEl) btnEl.disabled = true;
+    if (statusEl) statusEl.textContent = 'Laden…';
+
+    // Toon meteen skelet met loading-rijen
+    _anData = stocks.map(s => ({ ticker: s.ticker, name: s.name, currency: s.currency, loading: true }));
+    renderAnalyseTable();
+
+    const FINNHUB_KEY = 'd4g9371r01qm5b34gb90d4g9371r01qm5b34gb9g';
+
+    // Eén aandeel tegelijk ophalen met 900ms pauze
+    // Quote: Finnhub met retry + Yahoo fallback; metrics + consensus: Finnhub
+    for (let i = 0; i < stocks.length; i++) {
+        const s = stocks[i];
+        const [price, metricsRes, consensusRes] = await Promise.all([
+            fetchAnQuote(s.ticker),
+            fetchAnMetrics(s.ticker),
+            fetchAnConsensus(s.ticker),
+        ]);
+        const high52w = metricsRes?.high52w ?? null;
+        const low52w  = metricsRes?.low52w  ?? null;
+        const pe      = metricsRes?.pe ?? null;
+        const pctFromHigh = price && high52w ? ((price - high52w) / high52w) * 100 : null;
+        const rangePct    = price && high52w && low52w && high52w > low52w
+            ? Math.max(0, Math.min(100, ((price - low52w) / (high52w - low52w)) * 100))
+            : null;
+        const waardering = pe == null || pe <= 0 ? null
+            : pe < 15 ? 'ondergewaardeerd' : pe < 30 ? 'neutraal' : 'overgewaardeerd';
+
+        const idx = _anData.findIndex(d => d.ticker === s.ticker);
+        if (idx >= 0) _anData[idx] = { ticker: s.ticker, name: s.name, currency: s.currency, price, high52w, low52w, pe, pctFromHigh, rangePct, waardering, consensus: consensusRes, loading: false };
+
+        // Update status en herrender na elke rij
+        if (statusEl) statusEl.textContent = `Laden… ${i + 1}/${stocks.length}`;
+        renderAnalyseTable();
+
+        if (i < stocks.length - 1) await new Promise(res => setTimeout(res, 900));
+    }
+
+    // Tweede pass: herlaad aandelen die nog geen koers hebben
+    const missing = _anData.filter(d => !d.loading && d.price == null);
+    if (missing.length) {
+        if (statusEl) statusEl.textContent = `Herlaad ${missing.length} ontbrekende koersen…`;
+        await new Promise(res => setTimeout(res, 3000)); // wacht even voor rate limit reset
+        for (let i = 0; i < missing.length; i++) {
+            const row = missing[i];
+            const price = await fetchAnQuote(row.ticker);
+            if (price != null) {
+                const idx = _anData.findIndex(d => d.ticker === row.ticker);
+                if (idx >= 0) {
+                    const r = _anData[idx];
+                    const rangePct = r.high52w && r.low52w && r.high52w > r.low52w
+                        ? Math.max(0, Math.min(100, ((price - r.low52w) / (r.high52w - r.low52w)) * 100))
+                        : null;
+                    const pctFromHigh = r.high52w ? ((price - r.high52w) / r.high52w) * 100 : null;
+                    _anData[idx] = { ..._anData[idx], price, rangePct, pctFromHigh };
+                }
+                renderAnalyseTable();
+            }
+            if (i < missing.length - 1) await new Promise(res => setTimeout(res, 1500));
+        }
+    }
+
+    // Sla op in localStorage voor dagelijkse cache
+    try { localStorage.setItem(AN_CACHE_KEY, JSON.stringify({ date: today, data: _anData })); } catch {}
+
+    _anCacheTime = Date.now();
+    if (btnEl) btnEl.disabled = false;
+    if (statusEl) statusEl.innerHTML = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--success);margin-right:5px;vertical-align:middle;"></span>Bijgewerkt: ${new Date().toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })}`;
 }
